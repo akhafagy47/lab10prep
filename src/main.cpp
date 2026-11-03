@@ -1,3 +1,4 @@
+#include <chrono>
 #include <iostream>
 
 #include <SFML/Graphics.hpp>
@@ -33,18 +34,42 @@ int main() {
     fullscreenTriangle[2].texCoords = {0, 2};
     // load vertex and fragment shaders:
     sf::Shader shader(std::filesystem::path{"main.vert"}, std::filesystem::path{"main.frag"});
-    // TODO: eventually add another Shader here which uses the blur fragment shader,
-    // also create a sf::RenderTexture...
+    sf::Shader postProcessShader(std::filesystem::path{"main.vert"},
+                                 std::filesystem::path{"blur.frag"});
+    // the main shader renders into this texture, which is then blurred into the window:
+    sf::RenderTexture preBlurRenderTexture(window.getSize());
+    const auto startTime = std::chrono::steady_clock::now();
     while (window.isOpen()) {
         while (auto e = window.pollEvent()) {
             if (e->is<sf::Event::Closed>()) {
                 return 0;
             }
+            if (const auto* resized = e->getIf<sf::Event::Resized>()) {
+                if (!preBlurRenderTexture.resize(resized->size)) {
+                    std::cerr << "Failed to resize render texture\n";
+                    return 1;
+                }
+            }
         }
-        // TODO: set shader uniforms and eventually draw into
-        // a RenderTexture first before postprocessing into the window target.
+        const sf::Vector2f windowSize(window.getSize());
+        // SFML's mouse coords have the origin at the top-left, but gl_FragCoord's is the
+        // bottom-left, so flip y:
+        const sf::Vector2f mousePos(sf::Mouse::getPosition(window));
+        const float elapsedMs =
+            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - startTime)
+                .count();
+        shader.setUniform("windowSize", windowSize);
+        shader.setUniform("mousePos", sf::Vector2f(mousePos.x, windowSize.y - mousePos.y));
+        shader.setUniform("time", elapsedMs);
+        postProcessShader.setUniform("texture", preBlurRenderTexture.getTexture());
+        postProcessShader.setUniform("textureSize", sf::Vector2f(preBlurRenderTexture.getSize()));
+
+        preBlurRenderTexture.clear(sf::Color::Black);
+        preBlurRenderTexture.draw(fullscreenTriangle, &shader);
+        preBlurRenderTexture.display();
+
         window.clear(sf::Color::Black);
-        window.draw(fullscreenTriangle, &shader);
+        window.draw(fullscreenTriangle, &postProcessShader);
         window.display();
     }
     return 0;
